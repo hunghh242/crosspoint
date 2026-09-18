@@ -391,7 +391,7 @@ bool MappedInputManager::wasPressed(const Button button) const {
   if ((button == Button::NavPrevious || button == Button::Left) && remoteInput.button == RemoteButton::Previous)
     return true;
   if (button == Button::Confirm && homeAction == HomeButtonAction::Confirm) return true;
-  if (button == Button::Back && wasBackGesture()) return true;
+  if (button == Button::Back && (wasBackGesture() || homeAction == HomeButtonAction::Back)) return true;
 #if FREEINK_CAP_TOUCH
   if (button == Button::Confirm && wasPowerConfirmClick()) return true;
 #endif
@@ -405,7 +405,7 @@ bool MappedInputManager::wasReleased(const Button button) const {
   if ((button == Button::NavPrevious || button == Button::Left) && remoteInput.button == RemoteButton::Previous)
     return true;
   if (button == Button::Confirm && homeAction == HomeButtonAction::Confirm) return true;
-  if (button == Button::Back && wasBackGesture()) return true;
+  if (button == Button::Back && (wasBackGesture() || homeAction == HomeButtonAction::Back)) return true;
 #if FREEINK_CAP_TOUCH
   if (button == Button::Confirm && wasPowerConfirmClick()) return true;
 #endif
