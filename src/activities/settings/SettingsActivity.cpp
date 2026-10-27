@@ -227,6 +227,15 @@ void SettingsActivity::toggleSelectedSetting() {
     return;
   }
 
+#if FREEINK_CAP_FRONTLIGHT
+  // Hours span a whole day, so the tap-to-step VALUE row below would need up to
+  // 24 presses. Same slider picker the sleep timeout uses.
+  if (setting.nameId == StrId::STR_LIGHT_ON_FROM || setting.nameId == StrId::STR_LIGHT_OFF_AT) {
+    openFrontlightHourPicker(setting.nameId);
+    return;
+  }
+#endif
+
   if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {
     // Toggle the boolean value using the member pointer
     const bool currentValue = SETTINGS.*(setting.valuePtr);
@@ -447,6 +456,27 @@ void SettingsActivity::syncQuickResumeTimeoutForSleepScreen(bool sleepScreenChan
   }
 }
 
+#if FREEINK_CAP_FRONTLIGHT
+// Slider picker for the frontlight schedule bounds. 0..23 is the hour of day,
+// so the wrap-around window (start > end) stays expressible; largeStep jumps a
+// quarter day so the side buttons cross the dial quickly.
+void SettingsActivity::openFrontlightHourPicker(const StrId nameId) {
+  const bool isStart = nameId == StrId::STR_LIGHT_ON_FROM;
+  uint8_t CrossPointSettings::* field =
+      isStart ? &CrossPointSettings::frontlightScheduleStartHour : &CrossPointSettings::frontlightScheduleEndHour;
+  startActivityForResult(
+      std::make_unique<IntervalSelectionActivity>(renderer, mappedInput, "FrontlightHourInterval", nameId,
+                                                  SETTINGS.*field, 0, 23, 1, 6, StrId::STR_HOUR_VALUE_FORMAT),
+      [this, field](const ActivityResult& result) {
+        if (!result.isCancelled) {
+          SETTINGS.*field = static_cast<uint8_t>(std::get<IntervalResult>(result.data).value);
+          SETTINGS.saveToFile();
+        }
+        requestUpdate();
+      });
+}
+#endif
+
 void SettingsActivity::openSleepTimeoutPicker() {
   startActivityForResult(
       std::make_unique<IntervalSelectionActivity>(
@@ -494,6 +524,14 @@ std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
                static_cast<unsigned int>(SETTINGS.*(setting.valuePtr)));
       return valueBuffer;
     }
+#if FREEINK_CAP_FRONTLIGHT
+    if (setting.nameId == StrId::STR_LIGHT_ON_FROM || setting.nameId == StrId::STR_LIGHT_OFF_AT) {
+      char valueBuffer[16];
+      snprintf(valueBuffer, sizeof(valueBuffer), tr(STR_HOUR_VALUE_FORMAT),
+               static_cast<unsigned int>(SETTINGS.*(setting.valuePtr)));
+      return valueBuffer;
+    }
+#endif
     return std::to_string(SETTINGS.*(setting.valuePtr));
   }
   return "";

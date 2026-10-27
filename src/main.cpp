@@ -557,6 +557,39 @@ void setupDisplayAndFonts(bool seamless = false) {
   LOG_DBG("MAIN", "Fonts setup");
 }
 
+// Resolves Restore Light on Wake for a normal boot. FL_WAKE_SCHEDULE asks the
+// RTC instead of the saved on/off state: the point of the window is to light up
+// in the evening even if the light was off when the device went to sleep. A
+// start hour past the end hour wraps midnight (18 -> 6 covers evening + night).
+// Without a readable clock the window cannot be evaluated, so it degrades to
+// the plain restore behaviour rather than guessing.
+static bool frontlightWantedOnWake() {
+  switch (SETTINGS.frontlightRestoreOnWake) {
+    case CrossPointSettings::FL_WAKE_OFF:
+      return false;
+    case CrossPointSettings::FL_WAKE_SCHEDULE: {
+      uint8_t hour = 0;
+      uint8_t minute = 0;
+      if (!halClock.isAvailable() || !halClock.getTime(hour, minute)) {
+        LOG_DBG("MAIN", "Frontlight schedule: no clock, falling back to saved state");
+        return SETTINGS.frontlightOn != 0;
+      }
+      const uint8_t start = SETTINGS.frontlightScheduleStartHour;
+      const uint8_t end = SETTINGS.frontlightScheduleEndHour;
+      // Equal bounds describe an empty window, not an all-day one.
+      const bool inWindow = (start == end)  ? false
+                            : (start < end) ? (hour >= start && hour < end)
+                                            : (hour >= start || hour < end);
+      LOG_DBG("MAIN", "Frontlight schedule %02u-%02u, now %02u:%02u -> %s", start, end, hour, minute,
+              inWindow ? "on" : "off");
+      return inWindow;
+    }
+    case CrossPointSettings::FL_WAKE_RESTORE:
+    default:
+      return SETTINGS.frontlightOn != 0;
+  }
+}
+
 void setup() {
   BoardConfig::holdPowerRails();
 
@@ -688,8 +721,7 @@ void setup() {
   // light off unless Restore Light on Wake is enabled; silent maintenance
   // reboots replay the live state captured at restart, so they neither go dark
   // nor light up against the user's wake preference.
-  const bool restoreLightOn =
-      isSilentReboot ? silentRebootLightOn : (SETTINGS.frontlightOn != 0 && SETTINGS.frontlightRestoreOnWake != 0);
+  const bool restoreLightOn = isSilentReboot ? silentRebootLightOn : frontlightWantedOnWake();
   Frontlight.begin(SETTINGS.frontlightBrightness, SETTINGS.frontlightWarmth, restoreLightOn);
 
   switch (wakeupReason) {

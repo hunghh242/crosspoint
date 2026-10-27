@@ -55,8 +55,20 @@ void forEachBaseSetting(SettingVisitor visit, void* context) {
     emit(SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
                              StrId::STR_CAT_DISPLAY));
 #if FREEINK_CAP_FRONTLIGHT
-  emit(SettingInfo::Toggle(StrId::STR_RESTORE_LIGHT_ON_WAKE, &CrossPointSettings::frontlightRestoreOnWake,
-                           "frontlightRestoreOnWake", StrId::STR_CAT_DISPLAY));
+  // "By Time" needs a clock to compare against, so it is only offered where the
+  // RTC probe succeeded (halClock.begin() runs before settings are loaded).
+  std::vector<StrId> frontlightWakeValues = {StrId::STR_STATE_OFF, StrId::STR_STATE_ON};
+  if (halClock.isAvailable()) frontlightWakeValues.push_back(StrId::STR_LIGHT_BY_TIME);
+  emit(SettingInfo::Enum(StrId::STR_RESTORE_LIGHT_ON_WAKE, &CrossPointSettings::frontlightRestoreOnWake,
+                         std::move(frontlightWakeValues), "frontlightRestoreOnWake", StrId::STR_CAT_DISPLAY));
+  // Only meaningful for FL_WAKE_SCHEDULE; without a clock the window cannot be
+  // evaluated and "By Time" was never offered, so the rows would be dead weight.
+  if (halClock.isAvailable()) {
+    emit(SettingInfo::Value(StrId::STR_LIGHT_ON_FROM, &CrossPointSettings::frontlightScheduleStartHour, {0, 23, 1},
+                            "frontlightScheduleStartHour", StrId::STR_CAT_DISPLAY));
+    emit(SettingInfo::Value(StrId::STR_LIGHT_OFF_AT, &CrossPointSettings::frontlightScheduleEndHour, {0, 23, 1},
+                            "frontlightScheduleEndHour", StrId::STR_CAT_DISPLAY));
+  }
 #endif
 #if FREEINK_DEVICE_PICCO
   emit(SettingInfo::Enum(StrId::STR_SLIDE_SWITCH, &CrossPointSettings::slideSwitchAction,
