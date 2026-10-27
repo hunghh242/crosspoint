@@ -1215,6 +1215,11 @@ BookMetadataCache::TocEntry Epub::getTocItem(const int tocIndex) const {
   return bookMetadataCache->getTocEntry(tocIndex);
 }
 
+std::vector<uint8_t> Epub::getTocLevels() const {
+  if (!bookMetadataCache || !bookMetadataCache->isLoaded()) return {};
+  return bookMetadataCache->readTocLevels();
+}
+
 int Epub::getTocItemsCount() const {
   if (!bookMetadataCache || !bookMetadataCache->isLoaded()) {
     return 0;

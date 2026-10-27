@@ -122,6 +122,10 @@ class BookMetadataCache {
   bool load();
   SpineEntry getSpineEntry(int index);
   TocEntry getTocEntry(int index);
+  // Nesting level of every TOC entry, in document order. Read in one sequential
+  // pass from the first entry rather than getTocEntry()'s two seeks each, so a
+  // several-hundred-entry TOC costs one bounded SD pass. Empty on failure.
+  std::vector<uint8_t> readTocLevels();
   // Cumulative byte size up to and including the given spine item (0 if out of range
   // or not loaded).
   uint32_t getCumulativeSize(int index) const;
