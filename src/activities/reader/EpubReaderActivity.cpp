@@ -224,6 +224,7 @@ EpubReaderActivity::~EpubReaderActivity() {
 
   if (footnoteDepth > 0 && epub) saveLinkStack();
 
+  prefetchSection.reset();  // commits whatever the speculative build reached
   section.reset();
   CLIPPINGS.unload();
   if (pendingReadFolderMove && epub) {
@@ -440,6 +441,90 @@ void EpubReaderActivity::backgroundBuildTick() {
   } else if (section->isBuildComplete() && applyDeferredReposition()) {
     requestUpdate();
   }
+}
+
+// Lay the next chapter out ahead of the reader, so reaching the end of this one
+// continues straight into it instead of stopping at "Indexing". Runs a couple of
+// pages per loop tick; the work lands in that chapter's section cache on SD, which
+// is what the real open reads. Nothing here touches the displayed section.
+void EpubReaderActivity::prefetchNextChapterTick() {
+  if (!epub || !section || buildViewportWidth == 0) return;
+  // Never compete with the chapter on screen, its own background build, or a
+  // pending repaint.
+  // isBuildComplete() is deliberately not used: it only latches after a build
+  // this session ran, so a chapter opened straight from a finished cache never
+  // sets it. "Not building and not partial" is the real settled state.
+  if (section->isBuilding() || section->isPartial()) return;
+  // Same courtesy the in-chapter background build gives input: a button that is
+  // down (or a queued turn) is acted on before any speculative page is laid out.
+  if (buttonContactClosed() || anyButtonPressed() || pendingManualTurn != 0) return;
+
+  const int nextSpine = currentSpineIndex + 1;
+  if (nextSpine >= epub->getSpineItemsCount()) return;
+
+  // Only worth guessing once the reader is actually near the end. pageCount is
+  // the true total here (settled, non-partial), so this distance is exact.
+  if (static_cast<int>(section->pageCount) - section->currentPage - 1 > PREFETCH_TRIGGER_MARGIN) return;
+
+  if (prefetchSpineIndex != nextSpine) {
+    discardPrefetch();  // reader moved on: whatever was building is for the wrong chapter
+    prefetchSpineIndex = nextSpine;
+    prefetchSettled = false;
+  }
+  if (prefetchSettled) return;
+
+  if (ESP.getFreeHeap() < PREFETCH_MIN_FREE_HEAP || ESP.getMaxAllocHeap() < PREFETCH_MIN_MAX_ALLOC) {
+    // Hand the parser's memory back rather than sit on it while the heap is
+    // tight; the pages reached so far are committed as a partial cache.
+    discardPrefetch();
+    return;
+  }
+
+  // Every discard above happens before the lock: RenderLock is not recursive.
+  const ReaderRenderSpec spec = SETTINGS.readerRenderSpec(buildViewportWidth, buildViewportHeight);
+  // Try, not Blocking: this runs on the loop task and must never wait on the
+  // render task for work nobody asked for yet.
+  RenderLock lock(RenderLock::Mode::Try);
+  if (!lock.ownsLock()) return;
+  if (!prefetchSection) {
+    prefetchSection = std::unique_ptr<Section>(new Section(epub, nextSpine, renderer));
+    if (prefetchSection->loadSectionFile(spec) && !prefetchSection->isPartial()) {
+      prefetchSection.reset();  // already fully cached for this render spec
+      prefetchSettled = true;
+      return;
+    }
+    if (!prefetchSection->startBuild(spec)) {
+      LOG_DBG("ERS", "Prefetch: could not start build for spine %d", nextSpine);
+      prefetchSection.reset();
+      prefetchSettled = true;
+      return;
+    }
+    LOG_DBG("ERS", "Prefetching spine %d", nextSpine);
+  }
+
+  if (!prefetchSection->buildSomeMore(PREFETCH_PAGES_PER_TICK)) {
+    // buildSomeMore() abandons the build itself on error; don't retry this spine.
+    LOG_DBG("ERS", "Prefetch build failed for spine %d", nextSpine);
+    prefetchSection.reset();
+    prefetchSettled = true;
+    return;
+  }
+  if (prefetchSection->isBuildComplete()) {
+    LOG_DBG("ERS", "Prefetched spine %d: %d pages", nextSpine, prefetchSection->pageCount);
+    prefetchSection.reset();
+    prefetchSettled = true;
+  }
+}
+
+void EpubReaderActivity::discardPrefetch() {
+  if (!prefetchSection) {
+    prefetchSpineIndex = -1;
+    return;
+  }
+  RenderLock lock;
+  prefetchSection.reset();  // ~Section() suspends the build into a partial cache
+  prefetchSpineIndex = -1;
+  prefetchSettled = false;
 }
 
 void EpubReaderActivity::openDictionaryWordSelect() {
@@ -710,6 +795,8 @@ void EpubReaderActivity::loop() {
       }
     }
   }
+
+  prefetchNextChapterTick();
 
   const bool atEndOfBook = currentSpineIndex > 0 && currentSpineIndex >= epub->getSpineItemsCount();
   clearEndOfBookOptionsIfNeeded();
@@ -1380,6 +1467,10 @@ void EpubReaderActivity::applyOrientation(const uint8_t orientation) {
   if (SETTINGS.orientation == orientation && appliedOrientation == orientation) {
     return;
   }
+
+  // The viewport is about to change, so the prefetch is laying pages out for
+  // the wrong spec. Dropped before the lock below: RenderLock is not recursive.
+  discardPrefetch();
 
   RenderLock lock(*this);
   if (section) {
@@ -3050,6 +3141,8 @@ void EpubReaderActivity::paintOverlayPopup() {
 }
 
 void EpubReaderActivity::applyReaderTextSettings() {
+  // The prefetch is laying the next chapter out for the old render spec.
+  discardPrefetch();
   {
     RenderLock lock;
     if (section) {
