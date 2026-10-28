@@ -79,6 +79,24 @@ class EpubReaderActivity final : public ReaderActivity {
   // Whether the panel draws its cursor row. Button boards always do; touch
   // boards only once a button has moved it, so a tapped row is not left inverted.
   bool panelCursorShown = false;
+  // Contents panel outline: a nested TOC lists its parts and opens one part's
+  // chapters at a time (see TocOutline.h). Levels are read once per book open;
+  // tocRows holds only the TOC indices of the level on screen, so the panel's
+  // own row text stays the SD-backed lookup it already was.
+  std::vector<uint8_t> tocLevels;
+  std::vector<int16_t> tocRows;
+  bool tocNested = false;
+  int tocOpenParent = -1;  // TOC index of the open part, -1 = at the top
+  // Owns the panel title while a part is open: panelTitle is a const char*.
+  std::string tocOpenTitle;
+  void loadTocOutline();
+  void buildTocRows();
+  // TOC index behind a Contents row, or -1.
+  int tocIndexForPanelRow(int row) const;
+  // Opens a part, or closes the open one. closeTocPart() returns false at the
+  // top level, where Back dismisses the panel as before.
+  void openTocPart(int tocIndex);
+  bool closeTocPart();
   // FreeInkUI chrome + tap targets for the overlay; created when it opens,
   // released when it closes.
   std::unique_ptr<ReaderToolbarUi> toolbarUi;

@@ -34,6 +34,10 @@ class ReaderToolbarUi : public UiAppHost {
     int progressPermille = 0;        // 0..1000 book progress (scrub handle)
     // Panel
     const char* panelTitle = nullptr;
+    // Makes the title line a tap target that steps back one level, for a panel
+    // showing the inside of something (a part's chapters). The caller puts the
+    // affordance in panelTitle itself.
+    bool panelTitleBack = false;
     int itemCount = 0;
     int selectedIndex = -1;  // row the buttons' cursor sits on; -1 = none shown
     std::function<std::string(int)> rowText;

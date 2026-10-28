@@ -51,10 +51,12 @@
 #include "SdCardFont.h"
 #include "SdCardFontSystem.h"
 #include "SilentRestart.h"
+#include "TocOutline.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/settings/TextSettingsActivity.h"
 #include "clippings/ClippingText.h"
 #include "clippings/ClippingsManager.h"
+#include "components/HeaderBackTapTarget.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "util/BookmarkUtil.h"
@@ -849,6 +851,7 @@ void EpubReaderActivity::loop() {
     // The style was switched off while an overlay was up (Settings reached via
     // the More panel); fall back to the clean page.
     overlay = Overlay::None;
+    HeaderBackTapTarget::clear();  // the title band is gone; its rect must not outlive it
     discardOverlayPage();
     requestUpdate();
     return;
@@ -2691,6 +2694,63 @@ void EpubReaderActivity::settleOverlayRefresh() {
   renderer.cleanupGrayscaleWithFrameBuffer();  // waits, then reseeds the baseline
 }
 
+// Levels are read once per book open: one sequential SD pass over the TOC.
+void EpubReaderActivity::loadTocOutline() {
+  if (!epub) return;
+  if (tocLevels.empty()) {
+    tocLevels = epub->getTocLevels();
+    if (tocLevels.size() != static_cast<size_t>(epub->getTocItemsCount())) tocLevels.clear();
+    tocNested = toc_outline::isNested(tocLevels);
+  }
+}
+
+void EpubReaderActivity::buildTocRows() {
+  if (!tocNested) return;
+  const bool parentHasTarget = tocOpenParent >= 0 && epub->getTocItem(tocOpenParent).spineIndex != -1;
+  toc_outline::buildRows(tocLevels, tocOpenParent, parentHasTarget, tocRows);
+}
+
+int EpubReaderActivity::tocIndexForPanelRow(const int row) const {
+  if (!tocNested) return row;
+  if (row < 0 || row >= static_cast<int>(tocRows.size())) return -1;
+  return tocRows[row];
+}
+
+void EpubReaderActivity::openTocPart(const int tocIndex) {
+  tocOpenParent = tocIndex;
+  // Same chevron STR_BACK uses, so it is a glyph the UI font is known to have.
+  tocOpenTitle = epub->getTocItem(tocIndex).title;
+  buildTocRows();
+  panelIndex = 0;
+  if (toolbarUi) {
+    toolbarUi->nav().reset(0);
+    toolbarUi->nav().top = 0;
+  }
+  requestUpdate();
+}
+
+bool EpubReaderActivity::closeTocPart() {
+  if (overlay != Overlay::Contents || !tocNested || tocOpenParent < 0) return false;
+  const int wasOpen = tocOpenParent;
+  tocOpenParent = -1;
+  tocOpenTitle.clear();
+  buildTocRows();
+  // Land back on the part that was open, not at the top of the book.
+  panelIndex = 0;
+  for (size_t row = 0; row < tocRows.size(); row++) {
+    if (tocRows[row] == wasOpen) {
+      panelIndex = static_cast<int>(row);
+      break;
+    }
+  }
+  if (toolbarUi) {
+    toolbarUi->nav().reset(panelIndex);
+    toolbarUi->nav().top = panelIndex;
+  }
+  requestUpdate();
+  return true;
+}
+
 void EpubReaderActivity::openOverlay(Overlay target) {
   mappedInput.resetHomeButtonInput();
   const Overlay previous = overlay;
@@ -2705,7 +2765,23 @@ void EpubReaderActivity::openOverlay(Overlay target) {
       break;
     case Overlay::Contents: {
       RenderLock lock;
+      loadTocOutline();
       panelIndex = currentTocIndex();
+      if (tocNested) {
+        // Open on the part holding the current chapter, with that chapter
+        // selected, so Contents lands where the reader is.
+        const int current = panelIndex;
+        tocOpenParent = current >= 0 ? toc_outline::parentOf(tocLevels, current) : -1;
+        tocOpenTitle = tocOpenParent >= 0 ? epub->getTocItem(tocOpenParent).title : std::string();
+        buildTocRows();
+        panelIndex = 0;
+        for (size_t row = 0; row < tocRows.size(); row++) {
+          if (tocRows[row] == current) {
+            panelIndex = static_cast<int>(row);
+            break;
+          }
+        }
+      }
       // Fresh viewport opening on the current chapter, cursor shown or not.
       toolbarUi->nav().reset(panelIndex);
       toolbarUi->nav().top = panelIndex;
@@ -2766,8 +2842,9 @@ void EpubReaderActivity::openOverlay(Overlay target) {
 void EpubReaderActivity::closeOverlayToPage() {
   mappedInput.resetHomeButtonInput();
   overlay = Overlay::None;
-  overlayPopup.dismiss();  // an option picker cannot outlive its panel
-  toolbarUi.reset();       // ~1 KB of interaction table + props, only needed while open
+  HeaderBackTapTarget::clear();  // the title band is gone; its rect must not outlive it
+  overlayPopup.dismiss();        // an option picker cannot outlive its panel
+  toolbarUi.reset();             // ~1 KB of interaction table + props, only needed while open
   if (BoardConfig::isEegoA4()) pagesUntilFullRefresh = 1;
   if (!xteinkClassPanel() && overlayPageStored) {
     RenderLock lock;  // the render task shares the framebuffer
@@ -2820,10 +2897,19 @@ void EpubReaderActivity::renderOverlay() {
   model.selectedIndex = panelCursorShown ? panelIndex : -1;
   if (overlay == Overlay::Contents) {
     model.panelTitle = tr(STR_TOOL_CONTENTS);
-    model.itemCount = epub->getTocItemsCount();
+    model.itemCount = tocNested ? static_cast<int>(tocRows.size()) : epub->getTocItemsCount();
+    // An open part names the panel and offers the way back out of it.
+    if (tocNested && tocOpenParent >= 0 && !tocOpenTitle.empty()) {
+      model.panelTitle = tocOpenTitle.c_str();
+      model.panelTitleBack = true;
+    }
     model.rowText = [this](int i) {
-      const auto item = epub->getTocItem(i);
-      const int depth = item.level > 1 ? (item.level - 1) * 2 : 0;
+      const int tocIndex = tocIndexForPanelRow(i);
+      if (tocIndex < 0) return std::string();
+      const auto item = epub->getTocItem(tocIndex);
+      // Every row of an open part sits at the same level, so the indent that
+      // conveys depth in a flat list would only eat width here.
+      const int depth = !tocNested && item.level > 1 ? (item.level - 1) * 2 : 0;
       return std::string(depth, ' ') + item.title;
     };
   } else if (overlay == Overlay::Text) {
@@ -2976,6 +3062,7 @@ void EpubReaderActivity::handleOverlayInput() {
         // Full font picker (built-in + SD fonts, live preview) -- the same
         // screen Settings uses; a popup cannot scroll a long font list.
         overlay = Overlay::None;
+        HeaderBackTapTarget::clear();  // the title band is gone; its rect must not outlive it
         overlayPopup.dismiss();
         discardOverlayPage();
         {
@@ -3000,7 +3087,15 @@ void EpubReaderActivity::handleOverlayInput() {
         showTextRowPopup(panelIndex);
       }
     } else if (overlay == Overlay::Contents) {
-      const auto item = epub->getTocItem(panelIndex);
+      const int tocIndex = tocIndexForPanelRow(panelIndex);
+      if (tocIndex < 0) return;
+      // A part opens its chapters instead of jumping -- except when it is
+      // listed as its own first row, where it is the destination.
+      if (tocNested && tocIndex != tocOpenParent && toc_outline::hasChildren(tocLevels, tocIndex)) {
+        openTocPart(tocIndex);
+        return;
+      }
+      const auto item = epub->getTocItem(tocIndex);
       if (item.spineIndex != -1) {
         RenderLock lock;
         clearDeferredReposition();
@@ -3010,6 +3105,7 @@ void EpubReaderActivity::handleOverlayInput() {
         section.reset();
       }
       overlay = Overlay::None;
+      HeaderBackTapTarget::clear();  // the title band is gone; its rect must not outlive it
       discardOverlayPage();
       requestUpdate();
     } else if (overlay == Overlay::More) {
@@ -3020,6 +3116,9 @@ void EpubReaderActivity::handleOverlayInput() {
   // Steps up to the toolbar -- the Back button and a tap on the page above
   // the sheet.
   const auto dismissPanel = [this, &fastRedraw] {
+    // One level at a time: an open part closes back to the part list, and only
+    // Back at the top of Contents steps up to the toolbar.
+    if (closeTocPart()) return;
     overlay = Overlay::Toolbar;
     // Restore the snapshotted page under the toolbar instead of re-rendering
     // it (2+ refreshes -> one FAST). Re-store right away so another panel
@@ -3081,6 +3180,18 @@ void EpubReaderActivity::handleOverlayInput() {
     default:
       break;
   }
+  // Tap on the panel title's back affordance. Asked of the input manager
+  // directly: wasScreenTapped() filters taps on the back rect out (they belong
+  // to Button::Back), so testing a tap position against HeaderBackTapTarget
+  // here could never match. Checked before the routed-frame return below as
+  // well -- the title band is sheet chrome, so FUI marks the frame routed and
+  // nothing past that point would see it. The arrow closes one level; the
+  // left-edge swipe further down still dismisses the whole sheet.
+  if (overlay == Overlay::Contents && tocNested && tocOpenParent >= 0 && mappedInput.wasHeaderBackTap() &&
+      closeTocPart()) {
+    return;
+  }
+
   // Swipe up/down pages the list. Checked before the routed-frame return:
   // FUI routes every touch frame over the sheet, so a swipe's frames count as
   // routed (without dispatching -- too much travel for a tap) and the gesture
@@ -3273,6 +3384,7 @@ void EpubReaderActivity::activateMoreRow(int row) {
   }
   // Leaf actions open their own screen / perform the action; close the overlay first.
   overlay = Overlay::None;
+  HeaderBackTapTarget::clear();  // the title band is gone; its rect must not outlive it
   if (action == MA::GO_TO_PERCENT && overlayPageStored) {
     // The percent dialog is a popup over the current frame: wipe the toolbar
     // chrome back to the clean page first so the dialog draws over the page,

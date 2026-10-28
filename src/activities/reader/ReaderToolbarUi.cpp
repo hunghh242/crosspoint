@@ -9,7 +9,9 @@
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "components/HeaderBackTapTarget.h"
 #include "components/UITheme.h"
+#include "components/icons/headerIcons.h"
 #include "components/icons/readerToolbarIcons.h"
 
 namespace fui = freeink::ui;
@@ -129,6 +131,8 @@ void ReaderToolbarUi::buildToolRow(UiScreen& screen, const fui::LayoutAnchor anc
 }
 
 void ReaderToolbarUi::buildToolbar(UiScreen& screen) {
+  // The toolbar has no title band to step back from.
+  HeaderBackTapTarget::clear();
   const auto& tokens = screen.theme();
 
   // Sheet height from its content: scrub row, meta line, tool row, and the
@@ -257,7 +261,26 @@ void ReaderToolbarUi::buildPanel(UiScreen& screen) {
     titleStyle.bold = true;
     const fui::Rect line =
         screen.takeTop(titleH, tokens.spaceMd).inset(fui::Insets{0, tokens.spaceLg, 0, tokens.spaceLg});
-    screen.target().text(line, model_.panelTitle, titleStyle);
+    fui::Rect titleRect = line;
+    if (model_.panelTitleBack) {
+      // The same chevron every titled header paints, so stepping out of a part
+      // looks like stepping out of a Settings sub-screen.
+      const int16_t iconSize = std::min<int16_t>(line.height, 32);
+      const fui::Rect iconRect{line.x, static_cast<int16_t>(line.y + (line.height - iconSize) / 2), iconSize, iconSize};
+      screen.target().bitmap(iconRect, fui::bitmapFromIcon(icon_header_back_32), fui::BitmapMode::Center);
+      const int16_t shift = static_cast<int16_t>(iconSize + tokens.spaceSm);
+      titleRect = fui::Rect{static_cast<int16_t>(line.x + shift), line.y,
+                            static_cast<int16_t>(std::max(0, line.width - shift)), line.height};
+      // Recorded the way BaseTheme::drawHeader records its back button rather
+      // than as a frame hit: the sheet chrome marks every touch frame routed,
+      // so an action registered here never reaches the reader. Scoped to the
+      // chevron, like every other header, so the rest of the title line stays
+      // inert.
+      HeaderBackTapTarget::set(iconRect.x, iconRect.y, iconRect.width, iconRect.height);
+    } else {
+      HeaderBackTapTarget::clear();
+    }
+    screen.target().text(titleRect, model_.panelTitle, titleStyle);
     // Filled in below once the viewport is known; reserve the rect now.
     pageIndicatorRect_ = line;
   }
