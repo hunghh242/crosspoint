@@ -93,6 +93,13 @@ class MappedInputManager {
   // Back = left-to-right swipe anchored at the left edge. Public so swipe-mode
   // page turns (reader) can exclude it from a plain SwipeDir::Right.
   bool wasBackGesture() const;
+  // Just the tap on the header back button, without the edge swipe
+  // wasBackGesture() also reports. For screens where the button and the swipe
+  // must do different things -- the reader's contents sheet closes one level
+  // with the button and the whole sheet with the swipe. Note that
+  // wasScreenTapped() deliberately hides this tap, so it cannot be recovered
+  // by testing a tap position against HeaderBackTapTarget.
+  bool wasHeaderBackTap() const;
   // Home-key boards use a short Home-key tap to exit; their bottom-edge swipe
   // is intentionally unused. Other boards retain the bottom-edge Home gesture.
   // The reader menu remains on its existing top-edge gesture and middle tap.

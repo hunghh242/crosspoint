@@ -332,21 +332,23 @@ bool MappedInputManager::wasEdgeSwipe(const freeink::ui::ScreenEdge edge) const 
   return hit;
 }
 
-bool MappedInputManager::wasBackGesture() const {
-  // Tap on the header back button (rect recorded by BaseTheme::drawHeader;
-  // empty on screens without one). Folded into Button::Back alongside the
-  // swipe so every activity's existing Back handling picks it up.
+bool MappedInputManager::wasHeaderBackTap() const {
+  // Rect recorded by BaseTheme::drawHeader; empty on screens without one.
   float nx = 0.0f;
   float ny = 0.0f;
-  if (gpio.wasTouchTap(nx, ny)) {
-    int tapX = 0;
-    int tapY = 0;
-    renderer.tapToLogical(nx, ny, tapX, tapY);
-    if (HeaderBackTapTarget::contains(tapX, tapY)) {
-      rememberTouchHeldTime();
-      return true;
-    }
-  }
+  if (!gpio.wasTouchTap(nx, ny)) return false;
+  int tapX = 0;
+  int tapY = 0;
+  renderer.tapToLogical(nx, ny, tapX, tapY);
+  if (!HeaderBackTapTarget::contains(tapX, tapY)) return false;
+  rememberTouchHeldTime();
+  return true;
+}
+
+bool MappedInputManager::wasBackGesture() const {
+  // The header back button is folded into Button::Back alongside the swipe, so
+  // every activity's existing Back handling picks it up.
+  if (wasHeaderBackTap()) return true;
   // Back = left-to-right swipe starting near the left edge. Edge-anchored so that
   // mid-screen horizontal swipes stay available to activities that consume
   // SwipeDir::Left/Right (e.g. percent selection, image viewer).
