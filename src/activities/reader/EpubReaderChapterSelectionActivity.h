@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "activities/UiListActivity.h"
 
@@ -25,8 +26,32 @@ class EpubReaderChapterSelectionActivity final : public UiListActivity {
   int windowCount = 0;
   void refreshTocWindow(int start);
 
-  // Total TOC items count
-  int listCount() const override { return epub ? epub->getTocItemsCount() : 0; }
+  // A flattened TOC keeps its nesting as a level per entry, in document order,
+  // so an entry's children are the run of deeper entries that follows it. Books
+  // that use that nesting list their parts first and open one part at a time --
+  // a 300-chapter collection is unusable as one flat list. Books with no
+  // nesting keep exactly the single list they always had.
+  std::vector<uint8_t> tocLevels;    // one per TOC entry; empty = treat as flat
+  std::vector<int16_t> visibleRows;  // TOC indices listed now; unused when flat
+  bool hierarchical = false;
+  int openParent = -1;    // TOC index of the open part, -1 = at the top
+  std::string openTitle;  // header text while a part is open
+  int tocIndexForRow(int row) const;
+  // One past the last descendant of `index` (its subtree end).
+  int subtreeEnd(int index) const;
+  bool hasChildren(int index) const;
+  // No shallower entry precedes it, so it belongs at the top of the list.
+  bool isRoot(int index) const;
+  // Rebuild visibleRows for the current openParent and reset the row window.
+  void buildVisibleRows();
+  void openPart(int tocIndex);
+  // Returns false at the top level, where Back leaves the screen as before.
+  bool closePart();
+
+  int listCount() const override {
+    if (!epub) return 0;
+    return hierarchical ? static_cast<int>(visibleRows.size()) : epub->getTocItemsCount();
+  }
   void buildScreen(UiScreen& screen) override;
   void activateIndex(int index) override;
   // Back cancels with a result and Confirm activates on RELEASE here, and a

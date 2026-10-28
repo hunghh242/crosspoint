@@ -586,6 +586,28 @@ BookMetadataCache::TocEntry BookMetadataCache::getTocEntry(const int index) {
   return readTocEntry(bookFile);
 }
 
+std::vector<uint8_t> BookMetadataCache::readTocLevels() {
+  std::vector<uint8_t> levels;
+  if (!loaded || tocCount == 0) return levels;
+
+  // Entries are written back-to-back in index order (see the TOC pass in
+  // writeBookFile), so only the first one needs its LUT lookup; the rest follow
+  // the read cursor.
+  bookFile.seek(lutOffset + sizeof(uint32_t) * spineCount);
+  uint32_t firstEntryPos;
+  serialization::readPod(bookFile, firstEntryPos);
+  if (!bookFile.seek(firstEntryPos)) {
+    LOG_ERR("BMC", "readTocLevels: cannot seek to first TOC entry");
+    return levels;
+  }
+
+  levels.reserve(tocCount);
+  for (uint16_t i = 0; i < tocCount; i++) {
+    levels.push_back(readTocEntry(bookFile).level);
+  }
+  return levels;
+}
+
 BookMetadataCache::SpineEntry BookMetadataCache::readSpineEntry(HalFile& file) const {
   return readSpineEntryFrom(file);
 }
