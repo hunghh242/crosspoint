@@ -383,9 +383,19 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t frontlightBrightness = 60;
   uint8_t frontlightWarmth = 50;  // 0 = cool .. 100 = warm
   uint8_t frontlightOn = 0;
-  // Restore the saved on/off state after a normal boot or wake. Brightness and
-  // warmth are always remembered even when this is disabled.
-  uint8_t frontlightRestoreOnWake = 1;
+  // What the frontlight does on a normal boot or wake. 0/1 keep their legacy
+  // Off/On meaning so existing saves carry over.
+  enum FRONTLIGHT_ON_WAKE : uint8_t {
+    FL_WAKE_OFF = 0,       // always start dark
+    FL_WAKE_RESTORE = 1,   // replay the saved on/off state
+    FL_WAKE_SCHEDULE = 2,  // on inside the hour window below, off outside it
+    FRONTLIGHT_ON_WAKE_COUNT
+  };
+  uint8_t frontlightRestoreOnWake = FL_WAKE_RESTORE;
+  // Hour window for FL_WAKE_SCHEDULE, local time, inclusive start / exclusive
+  // end. start > end wraps midnight (18 -> 6 means "on all evening and night").
+  uint8_t frontlightScheduleStartHour = 18;
+  uint8_t frontlightScheduleEndHour = 6;
   // What the slide switch controls (boards with one): frontlight on/off or
   // night mode. The switch's position is applied at boot and on each change.
   enum SLIDE_SWITCH_ACTION : uint8_t {
