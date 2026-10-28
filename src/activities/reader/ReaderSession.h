@@ -16,6 +16,8 @@ class ReaderSession {
   uint32_t durationSeconds() const { return duration; }
   uint16_t startProgressBp() const { return startProgress; }
   uint16_t endProgressBp() const { return endProgress; }
+  // Forward turns whose dwell time was credited, i.e. pages actually read.
+  uint32_t pagesRead() const { return pages; }
 
  private:
   static uint16_t clampProgress(int progressBp);
@@ -24,6 +26,7 @@ class ReaderSession {
   int64_t anchorEpoch = 0;
   int64_t startEpoch = 0;
   uint32_t duration = 0;
+  uint32_t pages = 0;
   uint16_t anchorProgress = 0;
   uint16_t startProgress = 0;
   uint16_t endProgress = 0;

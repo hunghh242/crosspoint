@@ -15,6 +15,7 @@
 #include "CrossPointState.h"
 #include "EpubReaderActivity.h"
 #include "ReaderUtils.h"
+#include "ReadingStatsStore.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
 #include "XtcReaderActivity.h"
@@ -126,6 +127,15 @@ void ReaderActivity::onExit() {
 void ReaderActivity::prepareForSleep() { flushReaderSession(); }
 
 void ReaderActivity::flushReaderSession() {
+  // Statistics first, and independent of plugins: the reading history is the
+  // device's own, so it must not depend on anything being subscribed.
+  if (readerSession.durationSeconds() > 0 || readerSession.pagesRead() > 0) {
+    // The progress pair is what the per-book screen projects from: how far in
+    // the book this session started, and how far it got.
+    READING_STATS.record(bookPath, getBookTitle(), readerSession.durationSeconds(), readerSession.pagesRead(),
+                         readerSession.startProgressBp(), readerSession.endProgressBp());
+  }
+
   if (!readerSession.isEmitWorthy() || !pluginevents::anySubscriber(pluginevents::Event::ReaderSession)) {
     readerSession.reset();
     return;

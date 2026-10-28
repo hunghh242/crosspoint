@@ -25,6 +25,7 @@ void ReaderSession::onRenderComplete(const uint32_t monotonicMs, const int64_t t
         endProgress = anchorProgress;
       }
       duration += contribution;
+      pages++;
       endProgress = std::max(endProgress, progress);
     }
   }
@@ -41,6 +42,7 @@ void ReaderSession::reset() {
   anchorEpoch = 0;
   startEpoch = 0;
   duration = 0;
+  pages = 0;
   anchorProgress = 0;
   startProgress = 0;
   endProgress = 0;
