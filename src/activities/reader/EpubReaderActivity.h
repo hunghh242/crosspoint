@@ -153,6 +153,25 @@ class EpubReaderActivity final : public ReaderActivity {
   bool inputOverPage() const override { return overlay != Overlay::None || ReaderActivity::inputOverPage(); }
   // "Connecting Bluetooth…" or "Bluetooth failed" in place of the status bar title.
   mutable LinkNoteTitle linkNoteTitle;
+  // Speculative layout of the next chapter, started once the reader is within
+  // PREFETCH_TRIGGER_MARGIN pages of the end of this one, so turning the last
+  // page does not stop at the "Indexing" popup. Gated harder than the
+  // in-chapter build (BACKGROUND_BUILD_MIN_*): this work is a guess and must
+  // never crowd out the chapter actually on screen. Cheap to abandon --
+  // ~Section() suspends an in-progress build into a partial cache, so whatever
+  // it reached still makes the real open instant.
+  static constexpr int PREFETCH_TRIGGER_MARGIN = 2;
+  static constexpr int PREFETCH_PAGES_PER_TICK = 2;
+  static constexpr size_t PREFETCH_MIN_FREE_HEAP = 64 * 1024;
+  static constexpr size_t PREFETCH_MIN_MAX_ALLOC = 24 * 1024;
+  std::unique_ptr<Section> prefetchSection;
+  int prefetchSpineIndex = -1;   // spine the prefetch targets; -1 = idle
+  bool prefetchSettled = false;  // that spine needs no more work (cached, done or failed)
+  void prefetchNextChapterTick();
+  // Drops any in-flight prefetch. Safe at any point: the Section destructor
+  // persists the pages it reached. Must not be called while a RenderLock is
+  // held -- it takes one (the mutex is not recursive).
+  void discardPrefetch();
   static constexpr size_t RENDER_MIN_FREE_HEAP = 24 * 1024;
   static constexpr int PARTIAL_REBUILD_START_MARGIN = 15;
   static constexpr int BUILD_POPUP_PAGE_THRESHOLD = 20;
